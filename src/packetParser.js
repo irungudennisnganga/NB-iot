@@ -1,7 +1,13 @@
 import * as cbor from 'cbor';
-import { crc16ccitt } from 'crc'; // Comes from 'crc' package
+import { crc16ccitt } from 'crc'; // install via `npm install crc`
 
 export async function parsePacket(buffer) {
+  const minHeaderLength = 12; // Up to CRC
+
+  if (buffer.length < minHeaderLength) {
+    throw new Error('Buffer too short to parse');
+  }
+
   const bver = buffer.slice(0, 2).toString('hex'); // Protocol version
   const msgType = buffer[2];
   const code = buffer[3];
@@ -11,14 +17,18 @@ export async function parsePacket(buffer) {
   const separator = buffer[9];
 
   const payloadStart = 10;
-  const payloadEnd = 10 + dataLen;
+  const payloadEnd = payloadStart + dataLen;
+
+  // Check: is buffer long enough to contain payload + CRC?
+  if (buffer.length < payloadEnd + 2) {
+    throw new Error(`Buffer too short for payloadLength=${dataLen}`);
+  }
 
   const payloadBuffer = buffer.slice(payloadStart, payloadEnd);
-  const crcRaw = buffer.slice(payloadEnd, payloadEnd + 2); // 2-byte CRC
+  const crcRaw = buffer.slice(payloadEnd, payloadEnd + 2);
   const crcExpected = crcRaw.readUInt16BE();
 
-  // Slice all up to (but not including) CRC for calculation
-  const dataToCheck = buffer.slice(0, payloadEnd);
+  const dataToCheck = buffer.slice(0, payloadEnd); // data excluding CRC
   const crcCalculated = crc16ccitt(dataToCheck);
 
   let cborPayload = null;
@@ -43,6 +53,7 @@ export async function parsePacket(buffer) {
     },
     payload: cborPayload,
     payloadJson: cborJson,
+    payloadHex: payloadBuffer.toString('hex'),
     crc: {
       expected: '0x' + crcExpected.toString(16),
       calculated: '0x' + crcCalculated.toString(16),
