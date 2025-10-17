@@ -57,10 +57,15 @@ function buildTimeCalibration(sn, ip, port) {
  * @param {string} ip - Target meter IP address
  * @param {number} port - Target meter UDP port
  */
-function buildControlCommand(sn, bn, key, value, ip, port) {
+function buildControlCommand(sn, bn, key, value, ip, port, operation = 'W') {
   const data = [
-    { [key]: value, 22: sn, bn },
-    { 2: 2018, bn: '/70/0' }
+    {
+      op: operation,   // Add operation type (R, W, or E)
+      bn,              // Base name (object)
+      [key]: value,    // The actual data to write
+      22: sn           // Serial number
+    },
+    { 2: 2018, bn: '/70/0' }  // metadata section
   ];
 
   const cborBuf = cbor.encode(data);
@@ -79,8 +84,9 @@ function buildControlCommand(sn, bn, key, value, ip, port) {
   const crc = to16bit(crc16(full));
   const packet = Buffer.concat([full, Buffer.from(crc)]);
 
-  sendUDP(packet, ip, port, 'Control Command');
+  sendUDP(packet, ip, port, `Control Command (${operation})`);
 }
+
 
 /**
  * 📡 Send UDP Packet to Target Meter
