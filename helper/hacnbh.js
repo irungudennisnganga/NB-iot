@@ -1,7 +1,6 @@
-// hacnbh.js
 const cbor = require('cbor');
 const dgram = require('dgram');
-const { crc16 } = require('./crc16'); // MUST be CRC16/AUG-CCITT (init=0x1D0F, poly=0x1021)
+const { crc16 } = require('./crc16');
 
 let sharedSocket = null; // attached from index.js
 
