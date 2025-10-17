@@ -136,7 +136,7 @@ function parseUplink(hex, ip, port) {
     (Array.isArray(payload) && payload.find((e) => typeof e === 'object' && e[2]))?.[2] ||
     (Array.isArray(payload) && payload.find((e) => typeof e === 'object' && e[22]))?.[22] ||
     null;
-    buildTimeCalibration(meter_data.meter_sn, ip, port);
+    // buildTimeCalibration(meter_data.meter_sn, ip, port);
     buildControlCommand(meter_data.meter_sn, '/81/0', 0, 0, ip, port);
   return {
     header,
