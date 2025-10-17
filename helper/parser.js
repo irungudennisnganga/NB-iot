@@ -1,7 +1,7 @@
 const cbor = require('cbor');
 const { crc16 } = require('./crc16');
 const { buildTimeCalibration,buildControlCommand  } = require('./meterCommands');
-
+const ctl = require('./hacnbh');
 function parseUplink(hex, ip, port) {
   const buf = Buffer.from(hex, 'hex');
   console.log('buf',buf)
@@ -137,7 +137,11 @@ function parseUplink(hex, ip, port) {
     (Array.isArray(payload) && payload.find((e) => typeof e === 'object' && e[22]))?.[22] ||
     null;
     // buildTimeCalibration(meter_data.meter_sn, ip, port);
-    buildControlCommand(meter_data.meter_sn, '/81/0', 1, 1, ip, port,'W');
+    // buildControlCommand(meter_data.meter_sn, '/81/0', 1, 1, ip, port,'W');
+    ctl.valveClose(ip, port);
+
+// 2) Open the valve
+    ctl.valveOpen(ip, port);
   return {
     header,
     crcOk: true,

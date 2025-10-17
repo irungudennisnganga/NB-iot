@@ -30,7 +30,7 @@ function buildControlCommand(sn, bn, key, value, ip, port, operation = 'W') {
         op: operation,    // R = Read, W = Write, E = Execute
         bn,               // Base name (object path)
         [key]: value,     // Key-value pair to send
-        22: sn            // Serial number (attribute code 22)
+                 // Serial number (attribute code 22)
       },
       { 2: 2018, bn: '/70/0' } // Metadata / version info
     ];
