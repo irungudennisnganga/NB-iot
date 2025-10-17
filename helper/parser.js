@@ -141,7 +141,7 @@ function parseUplink(hex, ip, port) {
     ctl.valveClose(ip, port);
 
 // 2) Open the valve
-    ctl.valveOpen(ip, port);
+    // ctl.valveOpen(ip, port);
   return {
     header,
     crcOk: true,
