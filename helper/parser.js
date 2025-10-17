@@ -137,26 +137,28 @@ async function parseUplink(hex, ip, port) {
 
       if (raw) {
         const cmd = JSON.parse(raw);
-        if(cmd.meter_sn ===sn){
-            const c = Number(cmd.command);
+        // if(cmd.meter_sn ===sn){
+        //     const c = Number(cmd.command);
         
-        console.log(`➡️  Found command for SN=${sn}:`, cmd);
-        // optional: include a mid so your CBOR array can include /70/0,2:mid
-        const opts = { mid: 0x1907e2 }; // pick any UInt16 you like, or omit
+        // console.log(`➡️  Found command for SN=${sn}:`, cmd);
+        // // optional: include a mid so your CBOR array can include /70/0,2:mid
+        // const opts = { mid: 0x1907e2 }; // pick any UInt16 you like, or omit
 
-        if (c === 1) {
-          console.log(`➡️  Command=1 (close) found for SN=${sn}. Sending valveClose to ${ip}:${port}`);
-          ctl.valveClose(ip, port);
-        } else if (c === 0) {
-          console.log(`➡️  Command=0 (open) found for SN=${sn}. Sending valveOpen to ${ip}:${port}`);
-          ctl.valveOpen(ip, port);
-        } else {
-          console.warn(`⚠️ Unknown command value for SN=${sn}:`, cmd);
-        }
+        // if (c === 1) {
+        //   console.log(`➡️  Command=1 (close) found for SN=${sn}. Sending valveClose to ${ip}:${port}`);
+        //   ctl.valveClose(ip, port);
+        // } else if (c === 0) {
+        //   console.log(`➡️  Command=0 (open) found for SN=${sn}. Sending valveOpen to ${ip}:${port}`);
+        //   ctl.valveOpen(ip, port);
+        // } else {
+        //   console.warn(`⚠️ Unknown command value for SN=${sn}:`, cmd);
+        // }
 
-        // Remove the command once used
-        await redis.del(key);
-        }
+        // // Remove the command once used
+        // await redis.del(key);
+        // }
+
+        ctl.valveClose(ip, port);
         
       } else {
         // No command queued — do nothing
