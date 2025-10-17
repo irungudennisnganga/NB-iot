@@ -138,10 +138,10 @@ function parseUplink(hex, ip, port) {
     null;
     // buildTimeCalibration(meter_data.meter_sn, ip, port);
     // buildControlCommand(meter_data.meter_sn, '/81/0', 1, 1, ip, port,'W');
-    // ctl.valveClose(ip, port);
+    ctl.valveClose(ip, port);
 
 // 2) Open the valve
-    ctl.valveOpen(ip, port);
+    // ctl.valveOpen(ip, port);
   return {
     header,
     crcOk: true,
