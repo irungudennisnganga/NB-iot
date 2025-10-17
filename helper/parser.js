@@ -1,7 +1,8 @@
 const cbor = require('cbor');
 const { crc16 } = require('./crc16');
+const { buildTimeCalibration,buildControlCommand  } = require('./meterCommands');
 
-function parseUplink(hex) {
+function parseUplink(hex, ip, port) {
   const buf = Buffer.from(hex, 'hex');
   console.log('buf',buf)
 
@@ -53,7 +54,6 @@ function parseUplink(hex) {
   }
 
   const payload = cborData[0];
-  console.log('payload',payload)
 
   let meter_data = {};
 
@@ -78,7 +78,19 @@ function parseUplink(hex) {
         meter_data.meter_sn = values['2'];
         meter_data.time = values['13'];
         meter_data.time_zone = values['14'];
-        meter_data.battery_status = values['20'];
+
+        if( values['20'] ===0 || values['20'] ==="0"){
+          meter_data.battery_status = 'battery normal';
+        }else if( values['20'] ===1 || values['20'] ==="1"){
+          meter_data.battery_status = 'battery charging';
+        }else if( values['20'] ===2 || values['20'] ==="2"){
+          meter_data.battery_status = 'charging is finished, the battery is fully charged, it’s still charging';
+        }else if( values['20'] ===3 || values['20'] ==="3"){
+          meter_data.battery_status = 'battery is damaged';
+        }else if( values['20'] ===4 || values['20'] ==="4"){
+          meter_data.battery_status = 'low battery';
+        }
+        // meter_data.battery_status = values['20'];
         break;
 
       case '/80/0':
@@ -116,7 +128,7 @@ function parseUplink(hex) {
     }
   }
 
-  console.log('meter_data:', meter_data);
+
   
   
   // Extract SN if possible
@@ -124,7 +136,8 @@ function parseUplink(hex) {
     (Array.isArray(payload) && payload.find((e) => typeof e === 'object' && e[2]))?.[2] ||
     (Array.isArray(payload) && payload.find((e) => typeof e === 'object' && e[22]))?.[22] ||
     null;
-
+    buildTimeCalibration(meter_data.meter_sn, ip, port);
+    buildControlCommand(meter_data.meter_sn, '/81/0', 0, 0, ip, port);
   return {
     header,
     crcOk: true,
