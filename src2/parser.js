@@ -55,6 +55,70 @@ function parseUplink(hex) {
   const payload = cborData[0];
   console.log('payload',payload)
 
+ let meter_data = {};
+
+// Convert payload (array of maps) into a structured object
+let structured = {};
+for (const entry of payload) {
+  const bn = entry.get('bn');
+  if (!bn) continue;
+
+  const obj = {};
+  for (const [k, v] of entry.entries()) {
+    if (k !== 'bn') obj[k] = v;
+  }
+
+  structured[bn] = obj;
+}
+
+// Now extract the data you want into `meter_data`
+for (const [bn, values] of Object.entries(structured)) {
+  switch (bn) {
+    case '/3/0':
+      meter_data.meter_sn = values['2'];
+      meter_data.time = values['13'];
+      meter_data.time_zone = values['14'];
+      meter_data.battery_status = values['20'];
+      break;
+
+    case '/80/0':
+      meter_data.meter_reading = values['16'];
+      meter_data.meter_error_status = values['6'];
+      break;
+
+    case '/84/0':
+      meter_data.delivery_frequency = values['0'];
+      break;
+
+    case '/81/0':
+      if (values['1'] ===1 || values['1'] ==="1") {
+        meter_data.valve_status = 'closed';
+      }else if (values['1'] ===0 || values['1'] ==="0"){
+        meter_data.valve_status = 'open';
+      }
+
+      if (values['2'] ===1 || values['1'] ==="1") {
+        meter_data.valve_faulty_status = 'faulty';
+      }else if (values['2'] ===0 || values['2'] ==="0"){
+        meter_data.valve_faulty_status = 'normal';
+      }
+      
+      break;
+
+    case '/99/0':
+      meter_data.imei = values['1'];
+      meter_data.signal_rssi = values['11'];
+      meter_data.signal_snr = values['14'];
+      break;
+
+    default:
+      break;
+  }
+}
+
+console.log('meter_data:', meter_data);
+  
+  
   // Extract SN if possible
   const sn =
     (Array.isArray(payload) && payload.find((e) => typeof e === 'object' && e[2]))?.[2] ||
@@ -65,7 +129,8 @@ function parseUplink(hex) {
     header,
     crcOk: true,
     sn,
-    payload
+    payload,
+    meter_data
   };
 }
 
