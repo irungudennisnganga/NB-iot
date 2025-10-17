@@ -5,11 +5,11 @@ const socket = dgram.createSocket('udp4');
 
 socket.on('listening', () => {
   const addr = socket.address();
-  console.log(`🚀 UDP server listening on ${addr.address}:${addr.port}`);
+  console.log(`UDP server listening on ${addr.address}:${addr.port}`);
 });
 
 socket.on('message', (msg, rinfo) => {
-  console.log(`📥 UPLINK from ${rinfo.address}:${rinfo.port}`);
+  console.log(`UPLINK from ${rinfo.address}:${rinfo.port}`);
 
   try {
     // STEP 1: Check if msg is ASCII-encoded hex string
