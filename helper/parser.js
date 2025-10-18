@@ -148,7 +148,7 @@ async function parseUplink(hex, ip, port) {
           ctl.valveForce(ip, port, 1, { mid: 0x1907 });
         } else if (c === 0) {
           console.log(`➡️  Command=0 (open) found for SN=${sn}. Sending valveOpen to ${ip}:${port}`);
-          ctl.valveOpen(ip, port);
+          // ctl.valveOpen(ip, port);
           ctl.valveForce(ip, port, 0, { mid: 0x1907 });
         } else {
           console.warn(`⚠️ Unknown command value for SN=${sn}:`, cmd);
