@@ -184,9 +184,9 @@ async function parseUplink(hex, ip, port) {
             ctl.valveOpen(ip, port, opts);        // key 0 = 0
           }else if(c ===2){
             console.log(`➡️  Command=2 (query NB info) for SN=${sn}. Sending (msgId=${numToHex16(msgIdNum)}) to ${ip}:${port}`);
-            const res = await ctl.queryNBInfo(ip, port, opts);
+            ctl.queryNBInfo(ip, port, opts);
 
-            console.log('NB Info query sent:', res);
+            
           } else {
             console.warn(`⚠️ Unknown command for SN=${sn}:`, cmd);
           }
