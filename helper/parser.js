@@ -7,6 +7,7 @@ const ctl = require('./hacnbh');
 // ─── Redis ─────────────────────────────────────────────────────────────────────
 const redis = new Redis(process.env.REDIS_URL || 'redis://127.0.0.1:6379');
 const keyFor = (sn) => `meter:cmd:${sn}`;
+const CMD_TTL_SECONDS = 300; // keep your TTL, but we persist within it
 
 // ─── Helpers ───────────────────────────────────────────────────────────────────
 function bnToStructured(payload) {
@@ -55,18 +56,61 @@ function awaitAck(msgIdHex, timeoutMs = 3500) {
 }
 
 /** Send once, wait for 0x44 ACK by msgId, retry up to N times if needed. */
-async function sendWithAckRetry(sendFn, retries = 2, ackTimeoutMs = 3500, retryGapMs = 1500) {
+async function sendWithAckRetry(sendFn, onAttempt, retries = 2, ackTimeoutMs = 3500, retryGapMs = 1500) {
   for (let attempt = 0; attempt <= retries; attempt++) {
     const msgIdNum = rand16();
     const msgIdHex = numToHex16(msgIdNum);
 
-    await sendFn(msgIdNum);                       // must send using this msgId
+    await onAttempt?.(attempt, msgIdNum, msgIdHex); // update Redis status/attempts
+    await sendFn(msgIdNum);                         // must send using this msgId
+
     const ack = await awaitAck(msgIdHex, ackTimeoutMs);
     if (ack) return { ok: true, msgIdHex, ack };
 
     if (attempt < retries) await new Promise(r => setTimeout(r, retryGapMs));
   }
   return { ok: false };
+}
+
+// ─── Redis persistence helpers ────────────────────────────────────────────────
+async function readCmd(sn) {
+  const raw = await redis.get(keyFor(sn));
+  return raw ? JSON.parse(raw) : null;
+}
+async function writeCmd(sn, obj) {
+  const key = keyFor(sn);
+  const payload = JSON.stringify(obj);
+  if (CMD_TTL_SECONDS > 0) {
+    await redis.set(key, payload, 'EX', CMD_TTL_SECONDS);
+  } else {
+    await redis.set(key, payload);
+  }
+}
+async function markSending(sn, cmd, attempt, msgIdNum) {
+  await writeCmd(sn, {
+    ...cmd,
+    status: 'sending',
+    attempts: (cmd.attempts || 0) + 1,
+    last_msgId: msgIdNum,
+    last_msgId_hex: numToHex16(msgIdNum),
+    last_send_at: Date.now(),
+  });
+}
+async function markAcked(sn, cmd, msgIdHex, ackPayload) {
+  await writeCmd(sn, {
+    ...cmd,
+    status: 'acked',
+    acked_at: Date.now(),
+    last_msgId_hex: msgIdHex,
+    last_ack: ackPayload, // keep small; or store only a summary
+  });
+}
+async function markNoAck(sn, cmd) {
+  await writeCmd(sn, {
+    ...cmd,
+    status: 'no_ack',
+    last_result_at: Date.now(),
+  });
 }
 
 /**
@@ -168,37 +212,37 @@ async function parseUplink(hex, ip, port) {
   const sn = meter_data.meter_sn || null;
   if (sn) {
     try {
-      const key = keyFor(sn);
-      const raw = await redis.get(key);
-      if (raw) {
-        const cmd = JSON.parse(raw);
+      const cmd = await readCmd(sn);
+      if (cmd) {
         const c = Number(cmd.command);
 
-        const result = await sendWithAckRetry(async (msgIdNum) => {
-          const opts = { msgId: msgIdNum };
-          if (c === 1) {
-            console.log(`➡️  Command=1 (close) for SN=${sn}. Sending (msgId=${numToHex16(msgIdNum)}) to ${ip}:${port}`);
-            ctl.valveClose(ip, port, opts);       // key 0 = 1
-          } else if (c === 0) {
-            console.log(`➡️  Command=0 (open) for SN=${sn}. Sending (msgId=${numToHex16(msgIdNum)}) to ${ip}:${port}`);
-            ctl.valveOpen(ip, port, opts);        // key 0 = 0
-          }else if(c ===2){
-            console.log(`➡️  Command=2 (query NB info) for SN=${sn}. Sending (msgId=${numToHex16(msgIdNum)}) to ${ip}:${port}`);
-            ctl.queryNBInfo(ip, port, opts);
-
-            
-          } else {
-            console.warn(`⚠️ Unknown command for SN=${sn}:`, cmd);
+        const result = await sendWithAckRetry(
+          async (msgIdNum) => {
+            const opts = { msgId: msgIdNum, mid: msgIdNum }; // make payload two-object CBOR (like vendor sample)
+            if (c === 1) {
+              console.log(`➡️  Command=1 (close) for SN=${sn}. Sending (msgId=${numToHex16(msgIdNum)}) to ${ip}:${port}`);
+              ctl.valveClose(ip, port, opts);       // key 0 = 1
+            } else if (c === 0) {
+              console.log(`➡️  Command=0 (open) for SN=${sn}. Sending (msgId=${numToHex16(msgIdNum)}) to ${ip}:${port}`);
+              ctl.valveOpen(ip, port, opts);        // key 0 = 0
+            } else if (c === 2) {
+              console.log(`➡️  Command=2 (query NB info) for SN=${sn}. Sending (msgId=${numToHex16(msgIdNum)}) to ${ip}:${port}`);
+              ctl.queryNBInfo(ip, port, opts);
+            } else {
+              console.warn(`⚠️ Unknown command for SN=${sn}:`, cmd);
+            }
+          },
+          async (attempt, msgIdNum) => {            // onAttempt: persist status/attempts/msgId
+            await markSending(sn, cmd, attempt, msgIdNum);
           }
-        });
+        );
 
         if (result.ok) {
           console.log(`✅ ACK 0x44 received for msgId=${result.msgIdHex} (SN=${sn})`);
-          await redis.del(key); // consume command on success
+          await markAcked(sn, await readCmd(sn) || cmd, result.msgIdHex, result.ack);
         } else {
-          console.warn(`⏱️  No ACK after retries (SN=${sn}). Leaving command in Redis for next uplink.`);
-          // Optionally delete if you don't want to retry on next uplink:
-          // await redis.del(key);
+          console.warn(`⏱️  No ACK after retries (SN=${sn}). Keeping command in Redis as no_ack.`);
+          await markNoAck(sn, await readCmd(sn) || cmd);
         }
       }
     } catch (err) {
