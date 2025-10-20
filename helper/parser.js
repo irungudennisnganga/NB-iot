@@ -200,10 +200,10 @@ async function parseUplink(hex, ip, port) {
             const opts = { msgId: msgIdNum, mid: msgIdNum, useForce: !!cmd.useForce };
             if (c === 1) {
               console.log(`➡️  Command=1 (close) for SN=${sn}. Sending (msgId=${hex16(msgIdNum)}) to ${ip}:${port} ${opts.useForce?'[force]':''}`);
-              ctl.valveSend(ip, port, 'close', opts);
+              ctl.valveSend(ip, port, 'close');
             } else if (c === 0) {
               console.log(`➡️  Command=0 (open) for SN=${sn}. Sending (msgId=${hex16(msgIdNum)}) to ${ip}:${port} ${opts.useForce?'[force]':''}`);
-              ctl.valveSend(ip, port, 'open', opts);
+              ctl.valveSend(ip, port, 'open');
             } else if (c === 2) {
               console.log(`➡️  Command=2 (query NB info) for SN=${sn}. Sending (msgId=${hex16(msgIdNum)}) to ${ip}:${port}`);
               ctl.queryNBInfo(ip, port, opts);
