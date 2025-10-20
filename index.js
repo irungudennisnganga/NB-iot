@@ -116,7 +116,7 @@ app.get('/commands/health', (req, res) => res.json({ ok: true }));
 app.post('/commands', async (req, res) => {
   try {
     const { meter_sn, command } = req.body || {};
-    if (!meter_sn || ![0,1,'0','1'].includes(command)) {
+    if (!meter_sn || ![0,1,2,'0','1', '2'].includes(command)) {
       return res.status(400).json({ ok: false, error: 'Invalid payload. Expect: { meter_sn, command: 0|1 }' });
     }
     const key = keyFor(meter_sn);
