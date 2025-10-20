@@ -121,10 +121,10 @@ function schoolingCommand(ip, port, objects, opts = {}) {
 
 // Valve control: bn:/81/0, key 0 → 0=open, 1=close
 function valveOpen(ip, port, opts) {
-  writeCommand(ip, port, [bnMap('/81/0', [[0, 0]])], opts);
+  writeCommand(ip, port, [bnMap('/81/0', [[0, 0]])]);
 }
 function valveClose(ip, port, opts) {
-  writeCommand(ip, port, [bnMap('/81/0', [[0, 1]])], opts);
+  writeCommand(ip, port, [bnMap('/81/0', [[0, 1]])]);
 }
 
 // Force valve (prepaid): bn:/81/0, key 6 → 0 open, 1 close, 2 cancel
