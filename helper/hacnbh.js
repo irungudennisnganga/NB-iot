@@ -74,19 +74,19 @@ function schoolingCommand(ip, port, objects, opts={}) {
 }
 
 // High-level
-function valveOpen(ip, port, opts={}) { writeCommand(ip, port, [bnMap('/81/0', [[0, 0]])], opts); }
-function valveClose(ip, port, opts={}) { writeCommand(ip, port, [bnMap('/81/0', [[0, 1]])], opts); }
+function valveOpen(ip, port) { writeCommand(ip, port, [bnMap('/81/0', [[0, 0]])]); }
+function valveClose(ip, port) { writeCommand(ip, port, [bnMap('/81/0', [[0, 1]])]); }
 function valveForce(ip, port, action /*0|1|2*/, opts={}) { writeCommand(ip, port, [bnMap('/81/0', [[6, action]])], opts); }
 
 // Choose normal (key 0) or force (key 6) based on opts.useForce
 function valveSend(ip, port, desired /* 'open'|'close' */, opts={}) {
   if (opts.useForce) {
     const action = desired === 'open' ? 0 : 1;
-    return valveForce(ip, port, action, opts);
+    return valveForce(ip, port, action);
   }
   return desired === 'open'
-    ? valveOpen(ip, port, opts)
-    : valveClose(ip, port, opts);
+    ? valveOpen(ip, port)
+    : valveClose(ip, port);
 }
 
 function setTimeUTC(ip, port, tz='UTC+0', opts={}) {
