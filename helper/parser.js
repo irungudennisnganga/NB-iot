@@ -5,14 +5,14 @@ const Redis = require('ioredis');
 const EventEmitter = require('events');
 const ctl = require('./hacnbh');
 
-// ── Redis ───────────────────────────────────────
+// Redis
 const redis = new Redis(process.env.REDIS_URL || 'redis://127.0.0.1:6379');
 const keyFor = (sn) => `meter:cmd:${sn}`;
 const CMD_TTL_SECONDS = 300;
 
-// ── helpers (bn → structured) ──────────────────
+// helpers
 function bnToStructured(payload) {
-  const structured = {};
+  const out = {};
   for (const entry of payload) {
     const bn = entry.get && entry.get('bn');
     if (!bn) continue;
@@ -20,52 +20,40 @@ function bnToStructured(payload) {
     for (const [k, v] of entry.entries()) {
       if (k !== 'bn') obj[k] = v;
     }
-    structured[bn] = obj;
+    out[bn] = obj;
   }
-  return structured;
+  return out;
 }
 function rand16() { return Math.floor(Math.random() * 0x10000) & 0xffff; }
-function numToHex16(n) { return n.toString(16).padStart(4, '0'); }
+function hex16(n) { return n.toString(16).padStart(4, '0'); }
 
-// ── ACK bus (for 0x44 acks) ────────────────────
+// ACK bus
 const ackBus = new EventEmitter();
 ackBus.setMaxListeners(1000);
-
-function awaitAck(msgIdHex, timeoutMs = 3500) {
+function awaitAck(msgIdHex, timeoutMs=3500) {
   return new Promise((resolve) => {
-    const timer = setTimeout(() => {
-      cleanup();
-      resolve(null);
-    }, timeoutMs);
-
-    function onAck(payload) {
-      cleanup();
-      resolve(payload);
-    }
-    function cleanup() {
-      clearTimeout(timer);
-      ackBus.removeListener(`ack:${msgIdHex}`, onAck);
-    }
+    const timer = setTimeout(() => { cleanup(); resolve(null); }, timeoutMs);
+    const onAck = (payload) => { cleanup(); resolve(payload); };
+    function cleanup() { clearTimeout(timer); ackBus.removeListener(`ack:${msgIdHex}`, onAck); }
     ackBus.on(`ack:${msgIdHex}`, onAck);
   });
 }
 
-async function sendWithAckRetry(sendFn, onAttempt, retries = 2, ackTimeoutMs = 3500, retryGapMs = 1500) {
-  for (let attempt = 0; attempt <= retries; attempt++) {
+// retry wrapper
+async function sendWithAckRetry(sendFn, onAttempt, retries=2, ackTimeoutMs=3500, retryGapMs=1500) {
+  for (let attempt=0; attempt<=retries; attempt++) {
     const msgIdNum = rand16();
-    const msgIdHex = numToHex16(msgIdNum);
+    const msgIdHex = hex16(msgIdNum);
     await onAttempt?.(attempt, msgIdNum, msgIdHex);
     await sendFn(msgIdNum);
-
     const ack = await awaitAck(msgIdHex, ackTimeoutMs);
     if (ack) return { ok: true, msgIdHex, ack };
-
     if (attempt < retries) await new Promise(r => setTimeout(r, retryGapMs));
   }
-  return { ok: false };
+  return { ok:false };
 }
 
-// ── Redis persistence helpers ──────────────────
+// Redis helpers (persist attempts/state)
 async function readCmd(sn) {
   const raw = await redis.get(keyFor(sn));
   return raw ? JSON.parse(raw) : null;
@@ -82,79 +70,88 @@ async function markSending(sn, cmd, attempt, msgIdNum) {
     status: 'sending',
     attempts: (cmd.attempts || 0) + 1,
     last_msgId: msgIdNum,
-    last_msgId_hex: numToHex16(msgIdNum),
+    last_msgId_hex: hex16(msgIdNum),
     last_send_at: Date.now(),
   });
 }
 async function markAcked(sn, cmd, msgIdHex, ackPayload) {
-  await writeCmd(sn, { ...cmd, status: 'acked', acked_at: Date.now(), last_msgId_hex: msgIdHex, last_ack: ackPayload });
+  await writeCmd(sn, {
+    ...cmd,
+    status: 'acked',
+    acked_at: Date.now(),
+    last_msgId_hex: msgIdHex,
+    last_ack: ackPayload || { note: 'acked' },
+  });
 }
 async function markNoAck(sn, cmd) {
-  await writeCmd(sn, { ...cmd, status: 'no_ack', last_result_at: Date.now() });
+  await writeCmd(sn, {
+    ...cmd,
+    status: 'no_ack',
+    last_result_at: Date.now(),
+  });
 }
 
 /**
- * Parse uplink (header+CBOR+CRC), extract fields.
- * If 0x44 (device ACK), emit to ackBus.
- * Otherwise, if a command is queued in Redis for this meter, send once with retries.
+ * Parse uplink, validate CRC, decode CBOR.
+ * If funcCode==0x44 → emit ACK.
+ * Else → check Redis for queued command, accept “optimistic success” (valve status matches),
+ *        otherwise send one command (with ACK wait + small retry).
  */
 async function parseUplink(hex, ip, port) {
   const buf = Buffer.from(hex, 'hex');
-  if (buf.length < 12) throw new Error('Too short to be a valid packet');
+  if (buf.length < 12) throw new Error('Too short');
 
-  // Header
+  // header
   const header = {
-    version: buf.slice(0, 2).toString('hex'),
+    version: buf.slice(0,2).toString('hex'),
     msgType: buf[2],
     functionCode: buf[3],
-    msgId: buf.slice(4, 6).toString('hex'),
+    msgId: buf.slice(4,6).toString('hex'),
     format: buf[6],
-    dataLen: buf.readUInt16BE(7)
+    dataLen: buf.readUInt16BE(7),
   };
 
-  // Delimiter + payload bounds (FF or AA)
+  // delimiter+payload bounds
   const iFF = buf.indexOf(0xFF, 9);
   const iAA = buf.indexOf(0xAA, 9);
-  const firstDelim = [iFF, iAA].filter(i => i >= 0).sort((a, b) => a - b)[0];
-  const payloadStart = (firstDelim != null) ? (firstDelim + 1) : 10;
+  const firstDelim = [iFF, iAA].filter(i => i>=0).sort((a,b)=>a-b)[0];
+  const payloadStart = (firstDelim!=null) ? firstDelim+1 : 10;
   const payloadEnd = payloadStart + header.dataLen;
   if (buf.length < payloadEnd + 2) throw new Error(`Buffer too short for expected payload length=${header.dataLen}`);
 
   // CRC16/AUG-CCITT
   const dataField = buf.slice(payloadStart, payloadEnd);
-  const crcReceived = buf.slice(payloadEnd, payloadEnd + 2).readUInt16BE();
+  const crcReceived = buf.slice(payloadEnd, payloadEnd+2).readUInt16BE();
   const crcCalc = crc16(buf.slice(0, payloadEnd));
-  if (crcReceived !== crcCalc) throw new Error(`CRC mismatch. Expected ${crcCalc.toString(16)}, got ${crcReceived.toString(16)}`);
+  if (crcReceived !== crcCalc) throw new Error(`CRC mismatch exp=${crcCalc.toString(16)} got=${crcReceived.toString(16)}`);
 
-  // CBOR decode
+  // CBOR
   let payload;
   try {
-    const all = cbor.decodeAllSync(dataField);
-    payload = all[0];
+    payload = cbor.decodeAllSync(dataField)[0];
   } catch (e) {
-    throw new Error(`CBOR decoding failed: ${e.message}`);
+    throw new Error(`CBOR decode failed: ${e.message}`);
   }
 
-  // Restructure payload
+  // structured + extract
   const structured = bnToStructured(payload);
   console.log('Structured payload:', structured);
 
-  // Extract known fields
   const meter_data = {};
   if (structured['/3/0']) {
     const v = structured['/3/0'];
     meter_data.meter_sn  = v['2'];
     meter_data.time      = v['13'];
     meter_data.time_zone = v['14'];
-    if (v['20'] === 0 || v['20'] === '0') meter_data.battery_status = 'battery normal';
-    else if (v['20'] === 1 || v['20'] === '1') meter_data.battery_status = 'battery charging';
-    else if (v['20'] === 2 || v['20'] === '2') meter_data.battery_status = 'charging finished';
-    else if (v['20'] === 3 || v['20'] === '3') meter_data.battery_status = 'battery damaged';
-    else if (v['20'] === 4 || v['20'] === '4') meter_data.battery_status = 'low battery';
+    if (v['20']==0 || v['20']==='0') meter_data.battery_status='battery normal';
+    else if (v['20']==1 || v['20']==='1') meter_data.battery_status='battery charging';
+    else if (v['20']==2 || v['20']==='2') meter_data.battery_status='charging finished';
+    else if (v['20']==3 || v['20']==='3') meter_data.battery_status='battery damaged';
+    else if (v['20']==4 || v['20']==='4') meter_data.battery_status='low battery';
   }
   if (structured['/80/0']) {
     const v = structured['/80/0'];
-    meter_data.meter_reading      = v['16'];
+    meter_data.meter_reading = v['16'];
     meter_data.meter_error_status = v['6'];
   }
   if (structured['/84/0']) {
@@ -162,43 +159,53 @@ async function parseUplink(hex, ip, port) {
   }
   if (structured['/81/0']) {
     const v = structured['/81/0'];
-    if (v['1'] === 1 || v['1'] === '1') meter_data.valve_status = 'closed';
-    else if (v['1'] === 0 || v['1'] === '0') meter_data.valve_status = 'open';
-    if (v['2'] === 1 || v['2'] === '1') meter_data.valve_faulty_status = 'faulty';
-    else if (v['2'] === 0 || v['2'] === '0') meter_data.valve_faulty_status = 'normal';
+    meter_data.valve_status = (v['1']==1 || v['1']==='1') ? 'closed' : 'open';
+    meter_data.valve_faulty_status = (v['2']==1 || v['2']==='1') ? 'faulty' : 'normal';
   }
   if (structured['/99/0']) {
     const v = structured['/99/0'];
-    meter_data.imei        = v['1'];
+    meter_data.imei = v['1'];
     meter_data.signal_rssi = v['11'];
-    meter_data.signal_snr  = v['14'];
+    meter_data.signal_snr = v['14'];
   }
 
-  // If device ACK (0x44) → signal bus and return
+  // ACK (0x44) — just emit and return
   if (header.functionCode === 0x44) {
     ackBus.emit(`ack:${header.msgId}`, { structured, meter_data });
     return { header, crcOk: true, meter_data };
   }
 
-  // Normal uplink: check Redis command and send 1 command (with retry)
+  // Normal uplink: check Redis for command for this SN
   const sn = meter_data.meter_sn || null;
   if (sn) {
     try {
       const cmd = await readCmd(sn);
       if (cmd) {
         const c = Number(cmd.command);
+        const want = (c===0) ? 'open' : (c===1) ? 'close' : null;
 
+        // optimistic success if already in desired state
+        if (want && meter_data.valve_status) {
+          const isTarget = (want==='open' && meter_data.valve_status==='open') ||
+                           (want==='close' && meter_data.valve_status==='closed');
+          if (isTarget) {
+            await markAcked(sn, cmd, '(optimistic)', { note: 'state matched on uplink' });
+            return { header, crcOk: true, meter_data };
+          }
+        }
+
+        // send single command with small retry if needed
         const result = await sendWithAckRetry(
           async (msgIdNum) => {
-            const opts = { msgId: msgIdNum, mid: msgIdNum }; // include /70/0,2:mid
+            const opts = { msgId: msgIdNum, mid: msgIdNum, useForce: !!cmd.useForce };
             if (c === 1) {
-              console.log(`➡️  Command=1 (close) for SN=${sn}. Sending (msgId=${numToHex16(msgIdNum)}) to ${ip}:${port}`);
-              ctl.valveClose(ip, port, opts);
+              console.log(`➡️  Command=1 (close) for SN=${sn}. Sending (msgId=${hex16(msgIdNum)}) to ${ip}:${port} ${opts.useForce?'[force]':''}`);
+              ctl.valveSend(ip, port, 'close', opts);
             } else if (c === 0) {
-              console.log(`➡️  Command=0 (open) for SN=${sn}. Sending (msgId=${numToHex16(msgIdNum)}) to ${ip}:${port}`);
-              ctl.valveOpen(ip, port, opts);
+              console.log(`➡️  Command=0 (open) for SN=${sn}. Sending (msgId=${hex16(msgIdNum)}) to ${ip}:${port} ${opts.useForce?'[force]':''}`);
+              ctl.valveSend(ip, port, 'open', opts);
             } else if (c === 2) {
-              console.log(`➡️  Command=2 (query NB info) for SN=${sn}. Sending (msgId=${numToHex16(msgIdNum)}) to ${ip}:${port}`);
+              console.log(`➡️  Command=2 (query NB info) for SN=${sn}. Sending (msgId=${hex16(msgIdNum)}) to ${ip}:${port}`);
               ctl.queryNBInfo(ip, port, opts);
             } else {
               console.warn(`⚠️ Unknown command for SN=${sn}:`, cmd);
@@ -213,7 +220,7 @@ async function parseUplink(hex, ip, port) {
           console.log(`✅ ACK 0x44 received for msgId=${result.msgIdHex} (SN=${sn})`);
           await markAcked(sn, await readCmd(sn) || cmd, result.msgIdHex, result.ack);
         } else {
-          console.warn(`⏱️  No ACK after retries (SN=${sn}). Keeping command in Redis as no_ack.`);
+          console.warn(`⏱️  No 0x44 after retries (SN=${sn}). Keeping as no_ack; will reconcile on state.`);
           await markNoAck(sn, await readCmd(sn) || cmd);
         }
       }
