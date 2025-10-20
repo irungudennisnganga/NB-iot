@@ -94,12 +94,21 @@ function sendUDP(packet, ip, port, label = 'Packet') {
  * @param {number} [opts.mid]  - appended as /70/0 key 2
  * @param {number[]} [opts.msgId] - message id [hi, lo]
  */
+function toIdArr(id) {
+  if (id == null) return undefined;
+  if (Array.isArray(id)) return id;
+  return [ (id >> 8) & 0xff, id & 0xff ];
+}
+
+// ----------------- keep rest same until writeCommand -----------------
 function writeCommand(ip, port, objects, opts = {}) {
-  const { mid, msgId } = opts;
+  const { mid } = opts;
+  const msgId = toIdArr(opts.msgId);                      // ← accepts number or [hi,lo]
   const payload = mid != null ? [...objects, bnMap('/70/0', [[2, mid]])] : objects;
   const pkt = buildPacket(payload, 0x03, 0x00, msgId);
   sendUDP(pkt, ip, port, 'Config (WRITE)');
 }
+
 
 /**
  * Schooling command (func=0x45). Spec examples use msgType=0x02.
@@ -120,12 +129,12 @@ function schoolingCommand(ip, port, objects, opts = {}) {
 // --------------- high-level helpers ---------------
 
 // Valve control: bn:/81/0, key 0 → 0=open, 1=close
+// Valve control: bn:/81/0, key 0 → 0=open, 1=close  ✅
 function valveOpen(ip, port, opts) {
-  writeCommand(ip, port, [bnMap('/81/0', [[0, 0]])]);
+  writeCommand(ip, port, [ bnMap('/81/0', [[0, 0]]) ], opts);
 }
 function valveClose(ip, port, opts) {
-  // writeCommand(ip, port, [bnMap('/81/0', [[0, 1]])]);
-  writeCommand(ip, port, [ bnMap('/81/0', [[1, 1]]) ]);
+  writeCommand(ip, port, [ bnMap('/81/0', [[0, 1]]) ], opts);  // ← FIXED (key 0, not 1)
 }
 
 // Force valve (prepaid): bn:/81/0, key 6 → 0 open, 1 close, 2 cancel
