@@ -222,10 +222,10 @@ async function parseUplink(hex, ip, port) {
             const opts = { msgId: msgIdNum, mid: msgIdNum }; // make payload two-object CBOR (like vendor sample)
             if (c === 1) {
               console.log(`➡️  Command=1 (close) for SN=${sn}. Sending (msgId=${numToHex16(msgIdNum)}) to ${ip}:${port}`);
-              ctl.valveClose(ip, port);       // key 0 = 1
+              ctl.valveClose(ip, port, opts);       // key 0 = 1
             } else if (c === 0) {
               console.log(`➡️  Command=0 (open) for SN=${sn}. Sending (msgId=${numToHex16(msgIdNum)}) to ${ip}:${port}`);
-              ctl.valveOpen(ip, port);        // key 0 = 0
+              ctl.valveOpen(ip, port,opts);        // key 0 = 0
             } else if (c === 2) {
               console.log(`➡️  Command=2 (query NB info) for SN=${sn}. Sending (msgId=${numToHex16(msgIdNum)}) to ${ip}:${port}`);
               ctl.queryNBInfo(ip, port, opts);
