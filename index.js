@@ -64,6 +64,7 @@ socket.on('message', async (msg, rinfo) => {
       msgType: h.msgType,
       functionCode: h.functionCode,
       msgId: h.msgId,
+      parsed:parsed,
       crcOk: parsed?.crcOk,
     });
 
