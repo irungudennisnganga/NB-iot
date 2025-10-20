@@ -145,7 +145,7 @@ async function parseUplink(hex, ip, port) {
         if (c === 1) {
           console.log(`➡️  Command=1 (close) found for SN=${sn}. Sending valveClose to ${ip}:${port}`);
           ctl.valveClose(ip, port);
-          ctl.setTimeUTC(ip, port, 'UTC+3');
+          // ctl.setTimeUTC(ip, port, 'UTC+3');
           // ctl.valveForce(ip, port, 1, { mid: 0x1907 });
         } else if (c === 0) {
           console.log(`➡️  Command=0 (open) found for SN=${sn}. Sending valveOpen to ${ip}:${port}`);
