@@ -161,6 +161,7 @@ async function parseUplink(hex, ip, port) {
 
   // Structured + extraction
   const structured = bnToStructured(payload);
+  console.log('Structured payload:', structured);
   const meter_data = {};
 
   if (structured['/3/0']) {

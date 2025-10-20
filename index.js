@@ -57,7 +57,7 @@ socket.on('message', async (msg, rinfo) => {
 
     // Minimal, readable log
     const h = parsed?.header || {};
-    console.log('parsed', parsed);
+    // console.log('parse?d', parsed);
     console.log('✅ Parsed summary:', {
       bytes: hex.length / 2,
       from: `${rinfo.address}:${rinfo.port}`,
