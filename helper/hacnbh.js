@@ -125,7 +125,7 @@ function valveOpen(ip, port, opts) {
 }
 function valveClose(ip, port, opts) {
   // writeCommand(ip, port, [bnMap('/81/0', [[0, 1]])]);
-  writeCommand(ip, port, [ bnMap('/81/0', [[3, 1]]) ]);
+  writeCommand(ip, port, [ bnMap('/81/0', [[1, 1]]) ]);
 }
 
 // Force valve (prepaid): bn:/81/0, key 6 → 0 open, 1 close, 2 cancel
