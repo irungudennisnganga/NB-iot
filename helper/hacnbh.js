@@ -55,13 +55,17 @@ function sendUDP(packet, ip, port, label='Packet') {
 }
 
 // WRITE/config (0x03)
-function writeCommand(ip, port, objects, opts={}) {
-  const { mid, msgId, encrypted } = opts;
+function writeCommand(ip, port, objects, opts = {}) {
+  const { msgId } = opts;
   const idArr = toIdArr(msgId);
-  const payload = mid!=null ? [...objects, bnMap('/70/0', [[2, mid]])] : objects;
-  const pkt = buildPacket(payload, 0x03, 0x00, idArr, !!encrypted);
+
+  // Removed bnMap('/70/0', [[2, mid]])
+  const payload = objects;
+
+  const pkt = buildPacket(payload, 0x03, 0x00, idArr);
   sendUDP(pkt, ip, port, 'Config (WRITE)');
 }
+
 
 // SCHOOLING (0x45, msgType=0x02)
 function schoolingCommand(ip, port, objects, opts={}) {
