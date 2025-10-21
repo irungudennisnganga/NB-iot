@@ -50,7 +50,7 @@ function sendUDP(packet, ip, port, label = 'Packet') {
       if (err) console.error(`❌ ${label} failed:`, err.message);
       else {
         console.log(`✅ ${label} sent to ${ip}:${port}`);
-        console.log('HEX:', packet.toString('hex'));
+        console.log('HEX:', packet.toString('hex'), packet);
       }
     });
   } else {
@@ -98,7 +98,7 @@ function schoolingCommand(ip, port, objects, opts = {}) {
 
 // --- Valve Control ---
 function valveOpen(ip, port, opts = {}) {
-  writeCommand(ip, port, [bnMap('/81/0', [[0, 0]])], opts);
+  writeCommand(ip, port, [bnMap('/81/0', [[0, 0]])]);
 }
 function valveClose(ip, port, opts = {}) {
   writeCommand(ip, port, [bnMap('/81/0', [[0, 1]])], opts);
