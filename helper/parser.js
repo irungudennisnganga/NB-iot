@@ -201,6 +201,7 @@ async function parseUplink(hex, ip, port) {
             if (c === 1) {
               console.log(`➡️  Command=1 (close) for SN=${sn}. Sending (msgId=${hex16(msgIdNum)}) to ${ip}:${port} ${opts.useForce?'[force]':''}`);
               ctl.valveSend(ip, port, 'close');
+              
             } else if (c === 0) {
               console.log(`➡️  Command=0 (open) for SN=${sn}. Sending (msgId=${hex16(msgIdNum)}) to ${ip}:${port} ${opts.useForce?'[force]':''}`);
               ctl.valveSend(ip, port, 'open');
