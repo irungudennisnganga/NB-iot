@@ -25,8 +25,7 @@ function buildPacket(cborObjects, funcCode, msgType=0x00, msgId, encrypted=false
     funcCode & 0xff,
     id[0], id[1],
     0x3c,
-    ...u16(payload.length),
-    encrypted ? 0xaa : 0xff
+    ...u16(payload.length)
   ]);
   const full = Buffer.concat([header, payload]);
   const crc = Buffer.from(u16(crc16(full)));
