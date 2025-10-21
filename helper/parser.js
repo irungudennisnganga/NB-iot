@@ -197,14 +197,14 @@ async function parseUplink(hex, ip, port) {
         // send single command with small retry if needed
         const result = await sendWithAckRetry(
           async (msgIdNum) => {
-            const opts = { msgId: msgIdNum, mid: msgIdNum, useForce: !!cmd.useForce };
+            const opts = { msgId: msgIdNum, mid: msgIdNum };
             if (c === 1) {
               console.log(`➡️  Command=1 (close) for SN=${sn}. Sending (msgId=${hex16(msgIdNum)}) to ${ip}:${port} ${opts.useForce?'[force]':''}`);
-              ctl.valveSend(ip, port, 'close');
+              ctl.valveSend(ip, port, 'close',opts);
               
             } else if (c === 0) {
               console.log(`➡️  Command=0 (open) for SN=${sn}. Sending (msgId=${hex16(msgIdNum)}) to ${ip}:${port} ${opts.useForce?'[force]':''}`);
-              ctl.valveSend(ip, port, 'open');
+              ctl.valveSend(ip, port, 'open',opts);
             } else if (c === 2) {
               console.log(`➡️  Command=2 (query NB info) for SN=${sn}. Sending (msgId=${hex16(msgIdNum)}) to ${ip}:${port}`);
               ctl.queryNBInfo(ip, port, opts);

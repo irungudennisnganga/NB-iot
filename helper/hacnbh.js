@@ -74,8 +74,8 @@ function schoolingCommand(ip, port, objects, opts={}) {
 }
 
 // High-level
-function valveOpen(ip, port) { writeCommand(ip, port, [bnMap('/81/0', [[0, 0]])]); }
-function valveClose(ip, port) { writeCommand(ip, port, [bnMap('/81/0', [[0, 1]])]); }
+function valveOpen(ip, port) { writeCommand(ip, port, [bnMap('/81/0', [[0, 0]])],opts); }
+function valveClose(ip, port) { writeCommand(ip, port, [bnMap('/81/0', [[0, 1]])],opts); }
 function valveForce(ip, port, action /*0|1|2*/, opts={}) { writeCommand(ip, port, [bnMap('/81/0', [[6, action]])], opts); }
 
 // Choose normal (key 0) or force (key 6) based on opts.useForce
