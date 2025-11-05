@@ -1,237 +1,152 @@
-// helper/parser.js
 const cbor = require('cbor');
 const { crc16 } = require('./crc16');
-const Redis = require('ioredis');
-const EventEmitter = require('events');
+const { buildTimeCalibration,buildControlCommand  } = require('./meterCommands');
 const ctl = require('./hacnbh');
+function parseUplink(hex, ip, port) {
+  const buf = Buffer.from(hex, 'hex');
+  console.log('buf',buf)
 
-// Redis
-const redis = new Redis(process.env.REDIS_URL || 'redis://127.0.0.1:6379');
-const keyFor = (sn) => `meter:cmd:${sn}`;
-const CMD_TTL_SECONDS = 300;
+  if (buf.length < 12) {
+    throw new Error('Too short to be a valid packet');
+  }
 
-// helpers
-function bnToStructured(payload) {
-  const out = {};
+  const header = {
+    version: buf.slice(0, 2).toString('hex'),
+    msgType: buf[2],
+    functionCode: buf[3],
+    msgId: buf.slice(4, 6).toString('hex'),
+    format: buf[6],
+    dataLen: buf.readUInt16BE(7)
+  };
+
+  let payloadStart;
+  let payloadEnd;
+  const expectedLen = header.dataLen;
+
+  // Try to locate 0xFF delimiter
+  const delimiterIndex = buf.indexOf(0xFF, 9);
+  if (delimiterIndex !== -1) {
+    payloadStart = delimiterIndex + 1;
+  } else {
+    // Fallback: assume payload starts immediately after byte 9
+    payloadStart = 10;
+  }
+
+  payloadEnd = payloadStart + expectedLen;
+
+  if (buf.length < payloadEnd + 2) {
+    throw new Error(`Buffer too short for expected payload length=${expectedLen}`);
+  }
+
+  const dataField = buf.slice(payloadStart, payloadEnd);
+  const crcReceived = buf.slice(payloadEnd, payloadEnd + 2).readUInt16BE();
+  const crcCalc = crc16(buf.slice(0, payloadEnd));
+
+  if (crcReceived !== crcCalc) {
+    throw new Error(`CRC mismatch. Expected ${crcCalc.toString(16)}, got ${crcReceived.toString(16)}`);
+  }
+
+  let cborData;
+  try {
+    cborData = cbor.decodeAllSync(dataField);
+  } catch (e) {
+    throw new Error(`CBOR decoding failed: ${e.message}`);
+  }
+
+  const payload = cborData[0];
+
+  let meter_data = {};
+
+  // Convert payload (array of maps) into a structured object
+  let structured = {};
   for (const entry of payload) {
-    const bn = entry.get && entry.get('bn');
+    const bn = entry.get('bn');
     if (!bn) continue;
+
     const obj = {};
     for (const [k, v] of entry.entries()) {
       if (k !== 'bn') obj[k] = v;
     }
-    out[bn] = obj;
-  }
-  return out;
-}
-function rand16() { return Math.floor(Math.random() * 0x10000) & 0xffff; }
-function hex16(n) { return n.toString(16).padStart(4, '0'); }
 
-// ACK bus
-const ackBus = new EventEmitter();
-ackBus.setMaxListeners(1000);
-function awaitAck(msgIdHex, timeoutMs=3500) {
-  return new Promise((resolve) => {
-    const timer = setTimeout(() => { cleanup(); resolve(null); }, timeoutMs);
-    const onAck = (payload) => { cleanup(); resolve(payload); };
-    function cleanup() { clearTimeout(timer); ackBus.removeListener(`ack:${msgIdHex}`, onAck); }
-    ackBus.on(`ack:${msgIdHex}`, onAck);
-  });
-}
-
-// retry wrapper
-async function sendWithAckRetry(sendFn, onAttempt, retries=2, ackTimeoutMs=3500, retryGapMs=1500) {
-  for (let attempt=0; attempt<=retries; attempt++) {
-    const msgIdNum = rand16();
-    const msgIdHex = hex16(msgIdNum);
-    await onAttempt?.(attempt, msgIdNum, msgIdHex);
-    await sendFn(msgIdNum);
-    const ack = await awaitAck(msgIdHex, ackTimeoutMs);
-    if (ack) return { ok: true, msgIdHex, ack };
-    if (attempt < retries) await new Promise(r => setTimeout(r, retryGapMs));
-  }
-  return { ok:false };
-}
-
-// Redis helpers (persist attempts/state)
-async function readCmd(sn) {
-  const raw = await redis.get(keyFor(sn));
-  return raw ? JSON.parse(raw) : null;
-}
-async function writeCmd(sn, obj) {
-  const key = keyFor(sn);
-  const payload = JSON.stringify(obj);
-  if (CMD_TTL_SECONDS > 0) await redis.set(key, payload, 'EX', CMD_TTL_SECONDS);
-  else await redis.set(key, payload);
-}
-async function markSending(sn, cmd, attempt, msgIdNum) {
-  await writeCmd(sn, {
-    ...cmd,
-    status: 'sending',
-    attempts: (cmd.attempts || 0) + 1,
-    last_msgId: msgIdNum,
-    last_msgId_hex: hex16(msgIdNum),
-    last_send_at: Date.now(),
-  });
-}
-async function markAcked(sn, cmd, msgIdHex, ackPayload) {
-  await writeCmd(sn, {
-    ...cmd,
-    status: 'acked',
-    acked_at: Date.now(),
-    last_msgId_hex: msgIdHex,
-    last_ack: ackPayload || { note: 'acked' },
-  });
-}
-async function markNoAck(sn, cmd) {
-  await writeCmd(sn, {
-    ...cmd,
-    status: 'no_ack',
-    last_result_at: Date.now(),
-  });
-}
-
-/**
- * Parse uplink, validate CRC, decode CBOR.
- * If funcCode==0x44 → emit ACK.
- * Else → check Redis for queued command, accept “optimistic success” (valve status matches),
- *        otherwise send one command (with ACK wait + small retry).
- */
-async function parseUplink(hex, ip, port) {
-  const buf = Buffer.from(hex, 'hex');
-  if (buf.length < 12) throw new Error('Too short');
-
-  // header
-  const header = {
-    version: buf.slice(0,2).toString('hex'),
-    msgType: buf[2],
-    functionCode: buf[3],
-    msgId: buf.slice(4,6).toString('hex'),
-    format: buf[6],
-    dataLen: buf.readUInt16BE(7),
-  };
-
-  // delimiter+payload bounds
-  const iFF = buf.indexOf(0xFF, 9);
-  const iAA = buf.indexOf(0xAA, 9);
-  const firstDelim = [iFF, iAA].filter(i => i>=0).sort((a,b)=>a-b)[0];
-  const payloadStart = (firstDelim!=null) ? firstDelim+1 : 10;
-  const payloadEnd = payloadStart + header.dataLen;
-  if (buf.length < payloadEnd + 2) throw new Error(`Buffer too short for expected payload length=${header.dataLen}`);
-
-  // CRC16/AUG-CCITT
-  const dataField = buf.slice(payloadStart, payloadEnd);
-  const crcReceived = buf.slice(payloadEnd, payloadEnd+2).readUInt16BE();
-  const crcCalc = crc16(buf.slice(0, payloadEnd));
-  if (crcReceived !== crcCalc) throw new Error(`CRC mismatch exp=${crcCalc.toString(16)} got=${crcReceived.toString(16)}`);
-
-  // CBOR
-  let payload;
-  try {
-    payload = cbor.decodeAllSync(dataField)[0];
-  } catch (e) {
-    throw new Error(`CBOR decode failed: ${e.message}`);
+    structured[bn] = obj;
   }
 
-  // structured + extract
-  const structured = bnToStructured(payload);
-  console.log('Structured payload:', structured);
+  // Now extract the data you want into `meter_data`
+  for (const [bn, values] of Object.entries(structured)) {
+    switch (bn) {
+      case '/3/0':
+        meter_data.meter_sn = values['2'];
+        meter_data.time = values['13'];
+        meter_data.time_zone = values['14'];
 
-  const meter_data = {};
-  if (structured['/3/0']) {
-    const v = structured['/3/0'];
-    meter_data.meter_sn  = v['2'];
-    meter_data.time      = v['13'];
-    meter_data.time_zone = v['14'];
-    if (v['20']==0 || v['20']==='0') meter_data.battery_status='battery normal';
-    else if (v['20']==1 || v['20']==='1') meter_data.battery_status='battery charging';
-    else if (v['20']==2 || v['20']==='2') meter_data.battery_status='charging finished';
-    else if (v['20']==3 || v['20']==='3') meter_data.battery_status='battery damaged';
-    else if (v['20']==4 || v['20']==='4') meter_data.battery_status='low battery';
-  }
-  if (structured['/80/0']) {
-    const v = structured['/80/0'];
-    meter_data.meter_reading = v['16'];
-    meter_data.meter_error_status = v['6'];
-  }
-  if (structured['/84/0']) {
-    meter_data.delivery_frequency = structured['/84/0']['0'];
-  }
-  if (structured['/81/0']) {
-    const v = structured['/81/0'];
-    meter_data.valve_status = (v['1']==1 || v['1']==='1') ? 'closed' : 'open';
-    meter_data.valve_faulty_status = (v['2']==1 || v['2']==='1') ? 'faulty' : 'normal';
-  }
-  if (structured['/99/0']) {
-    const v = structured['/99/0'];
-    meter_data.imei = v['1'];
-    meter_data.signal_rssi = v['11'];
-    meter_data.signal_snr = v['14'];
-  }
+        if( values['20'] ===0 || values['20'] ==="0"){
+          meter_data.battery_status = 'battery normal';
+        }else if( values['20'] ===1 || values['20'] ==="1"){
+          meter_data.battery_status = 'battery charging';
+        }else if( values['20'] ===2 || values['20'] ==="2"){
+          meter_data.battery_status = 'charging is finished, the battery is fully charged, it’s still charging';
+        }else if( values['20'] ===3 || values['20'] ==="3"){
+          meter_data.battery_status = 'battery is damaged';
+        }else if( values['20'] ===4 || values['20'] ==="4"){
+          meter_data.battery_status = 'low battery';
+        }
+        // meter_data.battery_status = values['20'];
+        break;
 
-  // ACK (0x44) — just emit and return
-  if (header.functionCode === 0x44) {
-    ackBus.emit(`ack:${header.msgId}`, { structured, meter_data });
-    return { header, crcOk: true, meter_data };
-  }
+      case '/80/0':
+        meter_data.meter_reading = values['16'];
+        meter_data.meter_error_status = values['6'];
+        break;
 
-  // Normal uplink: check Redis for command for this SN
-  const sn = meter_data.meter_sn || null;
-  if (sn) {
-    try {
-      const cmd = await readCmd(sn);
-      if (cmd) {
-        const c = Number(cmd.command);
-        const want = (c===0) ? 'open' : (c===1) ? 'close' : null;
+      case '/84/0':
+        meter_data.delivery_frequency = values['0'];
+        break;
 
-        // optimistic success if already in desired state
-        if (want && meter_data.valve_status) {
-          const isTarget = (want==='open' && meter_data.valve_status==='open') ||
-                           (want==='close' && meter_data.valve_status==='closed');
-          if (isTarget) {
-            await markAcked(sn, cmd, '(optimistic)', { note: 'state matched on uplink' });
-            return { header, crcOk: true, meter_data };
-          }
+      case '/81/0':
+        if (values['1'] ===1 || values['1'] ==="1") {
+          meter_data.valve_status = 'closed';
+        }else if (values['1'] ===0 || values['1'] ==="0"){
+          meter_data.valve_status = 'open';
         }
 
-        // send single command with small retry if needed
-        const result = await sendWithAckRetry(
-          async (msgIdNum) => {
-            const opts = { msgId: msgIdNum, mid: msgIdNum, useForce: !!cmd.useForce };
-            if (c === 1) {
-              console.log(`➡️  Command=1 (close) for SN=${sn}. Sending (msgId=${hex16(msgIdNum)}) to ${ip}:${port} ${opts.useForce?'[force]':''}`);
-              ctl.valveSend(ip, port, 'close', opts);
-            } else if (c === 0) {
-              console.log(`➡️  Command=0 (open) for SN=${sn}. Sending (msgId=${hex16(msgIdNum)}) to ${ip}:${port} ${opts.useForce?'[force]':''}`);
-              ctl.valveSend(ip, port, 'open', opts);
-            } else if (c === 2) {
-              console.log(`➡️  Command=2 (query NB info) for SN=${sn}. Sending (msgId=${hex16(msgIdNum)}) to ${ip}:${port}`);
-              ctl.queryNBInfo(ip, port, opts);
-            } else {
-              console.warn(`⚠️ Unknown command for SN=${sn}:`, cmd);
-            }
-          },
-          async (attempt, msgIdNum) => {
-            await markSending(sn, cmd, attempt, msgIdNum);
-          }
-        );
-
-        if (result.ok) {
-          console.log(`✅ ACK 0x44 received for msgId=${result.msgIdHex} (SN=${sn})`);
-          await markAcked(sn, await readCmd(sn) || cmd, result.msgIdHex, result.ack);
-        } else {
-          console.warn(`⏱️  No 0x44 after retries (SN=${sn}). Keeping as no_ack; will reconcile on state.`);
-          await markNoAck(sn, await readCmd(sn) || cmd);
+        if (values['2'] ===1 || values['1'] ==="1") {
+          meter_data.valve_faulty_status = 'faulty';
+        }else if (values['2'] ===0 || values['2'] ==="0"){
+          meter_data.valve_faulty_status = 'normal';
         }
-      }
-    } catch (err) {
-      console.error('❌ Redis command dispatch error:', err);
+        
+        break;
+
+      case '/99/0':
+        meter_data.imei = values['1'];
+        meter_data.signal_rssi = values['11'];
+        meter_data.signal_snr = values['14'];
+        break;
+
+      default:
+        break;
     }
-  } else {
-    console.warn('⚠️ No meter_sn extracted; skipping Redis command lookup.');
   }
 
-  return { header, crcOk: true, meter_data };
+
+  
+  
+  // Extract SN if possible
+  const sn =
+    (Array.isArray(payload) && payload.find((e) => typeof e === 'object' && e[2]))?.[2] ||
+    (Array.isArray(payload) && payload.find((e) => typeof e === 'object' && e[22]))?.[22] ||
+    null;
+    // buildTimeCalibration(meter_data.meter_sn, ip, port);
+    // buildControlCommand(meter_data.meter_sn, '/81/0', 1, 1, ip, port,'W');
+    ctl.valveClose(ip, port);
+
+// 2) Open the valve
+    // ctl.valveOpen(ip, port);
+  return {
+    header,
+    crcOk: true,
+    meter_data
+  };
 }
 
 module.exports = { parseUplink };
