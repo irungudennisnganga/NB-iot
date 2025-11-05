@@ -59,7 +59,7 @@ function sendUDP(packet, ip, port, label = 'Packet') {
 // High-level helpers (unchanged) …
 function writeCommand(ip, port, objects) {
   const pkt = buildPacket(objects, 0x03);
-  sendUDP(pkt, ip, port, 'Config (WRITE)');
+  sendUDP(pkt, ip, port);
 }
 function schoolingCommand(ip, port, objects) {
   const pkt = buildPacket(objects, 0x45);
