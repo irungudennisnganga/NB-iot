@@ -65,7 +65,7 @@ function schoolingCommand(ip, port, objects) {
   sendUDP(pkt, ip, port, 'Schooling');
 }
 function valveOpen(ip, port) { writeCommand(ip, port, [{ bn: '/81/0', 0: 0 }]); }
-function valveClose(ip, port) { writeCommand(ip, port, [{ bn: '/81/0', 0: 1 }]); }
+function valveClose(ip, port) { writeCommand(ip, port, { bn: '/81/0', 0: 1 }); }
 function valveForce(ip, port, action) { writeCommand(ip, port, [{ bn: '/81/0', 6: action }]); }
 function setTimeUTC(ip, port, tz = 'UTC+0') {
   const ts = Math.floor(Date.now() / 1000);
