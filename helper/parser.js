@@ -22,7 +22,6 @@ function parseUplink(hex, ip, port) {
   let payloadStart;
   let payloadEnd;
   const expectedLen = header.dataLen;
-
   // Try to locate 0xFF delimiter
   const delimiterIndex = buf.indexOf(0xFF, 9);
   if (delimiterIndex !== -1) {
@@ -31,12 +30,13 @@ function parseUplink(hex, ip, port) {
     // Fallback: assume payload starts immediately after byte 9
     payloadStart = 10;
   }
-
+  
   payloadEnd = payloadStart + expectedLen;
-
+  
   if (buf.length < payloadEnd + 2) {
     throw new Error(`Buffer too short for expected payload length=${expectedLen}`);
   }
+  console.log('Expected Length:', expectedLen,payloadStart,delimiterIndex);
 
   const dataField = buf.slice(payloadStart, payloadEnd);
   const crcReceived = buf.slice(payloadEnd, payloadEnd + 2).readUInt16BE();
@@ -60,7 +60,9 @@ function parseUplink(hex, ip, port) {
   // Convert payload (array of maps) into a structured object
   let structured = {};
   for (const entry of payload) {
+    console.log('Entry:', entry);
     const bn = entry.get('bn');
+
     if (!bn) continue;
 
     const obj = {};
@@ -69,6 +71,7 @@ function parseUplink(hex, ip, port) {
     }
 
     structured[bn] = obj;
+    // console.log('Structured Entry:', bn, obj);
   }
 
   // Now extract the data you want into `meter_data`
@@ -95,7 +98,10 @@ function parseUplink(hex, ip, port) {
 
       case '/80/0':
         meter_data.meter_reading = values['16'];
+        const cumulative_m3 = meter_data.meter_reading  / 1000; 
+        meter_data.meter_reading_m3 = parseFloat(cumulative_m3.toFixed(3));
         meter_data.meter_error_status = values['6'];
+        meter_data.meter_type = values['1'];
         break;
 
       case '/84/0':
@@ -137,11 +143,11 @@ function parseUplink(hex, ip, port) {
     (Array.isArray(payload) && payload.find((e) => typeof e === 'object' && e[22]))?.[22] ||
     null;
     // buildTimeCalibration(meter_data.meter_sn, ip, port);
-    // buildControlCommand(meter_data.meter_sn, '/81/0', 0, 1, ip, port,'W');
+    buildControlCommand(meter_data.meter_sn, '/81/0', 0, 0, ip, port,'W');
     // ctl.valveClose(ip, port);
 
 // 2) Open the valve
-    ctl.valveOpen(ip, port);
+    // ctl.valveOpen(ip, port);
   return {
     header,
     crcOk: true,
